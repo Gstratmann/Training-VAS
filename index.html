@@ -31,7 +31,7 @@
   .scale-name{font-size:15px;font-weight:600;}
   .scale-note{font-size:12px;color:var(--ink-2);font-weight:400;}
   /* full-width line that always fits the viewport; both ends always visible */
-  .scale-body{width:100%;max-width:560px;}
+  .scale-body{width:100%;max-width:520px;padding:0 22px;}
   .anchors{display:flex;justify-content:space-between;gap:8px;margin-bottom:4px;}
   .anchor{font-size:12px;color:var(--ink-2);max-width:48%;line-height:1.2;}
   .anchor.right{text-align:right;}
@@ -92,18 +92,25 @@
   </div>
 
   <div class="actions">
-    <button class="btn" id="gen">Generate for intervals.icu</button>
-    <button class="btn ghost" id="save">Save to local log</button>
+    <button class="btn" id="save">Save</button>
     <button class="btn ghost" id="reset">Clear form</button>
   </div>
   <div class="status" id="status"></div>
 
   <div class="outbox" id="outbox" style="display:none;">
-    <label class="cap" for="out">Paste into the activity's Notes field, then press Enter to commit</label>
+    <label class="cap" for="out">Relay not set up — paste this into the activity's Notes field (Enter to commit), or add a Relay URL in Settings</label>
     <textarea id="out" readonly></textarea>
-    <div class="encnote">The <span class="mono">VASX1:</span> line is your encoded scores — unreadable on purpose, so pasting it shows you no numbers. It carries your ratings to the coach through the pipeline.</div>
+    <div class="encnote">The <span class="mono">VASX1:</span> line is your encoded scores — unreadable on purpose, so pasting it shows you no numbers.</div>
     <div class="actions" style="margin-top:10px;"><button class="btn" id="copy">Copy to clipboard</button></div>
   </div>
+
+  <details class="log" id="settingsBox">
+    <summary>Settings <span class="count">relay</span></summary>
+    <div class="field" style="margin-top:12px;"><label class="cap" for="relayUrl">Relay URL (Apps Script web app, ends in /exec)</label><input type="text" id="relayUrl" placeholder="https://script.google.com/macros/s/…/exec"></div>
+    <div class="field" style="margin-top:10px;"><label class="cap" for="relaySecret">Relay secret (must match Script Property VAS_SECRET)</label><input type="text" id="relaySecret" placeholder="your shared secret"></div>
+    <div class="actions" style="margin-top:10px;"><button class="btn ghost" id="saveSettings">Save settings on this device</button></div>
+    <div class="encnote">Stored only on this device, never in the public site. With a Relay URL set, Save sends automatically — no paste. Leave blank to fall back to manual token copy.</div>
+  </details>
 
   <details class="log">
     <summary>Feedback &amp; data <span class="count" id="logcount"></span></summary>
@@ -220,14 +227,10 @@ function buildToken(){
   const parts=ALL.filter(s=>values[s.key]!=null).map(s=>`${s.key}=${values[s.key].toFixed(1)}`);
   return parts.length?"VASX1:"+btoa(parts.join(";")):null;
 }
-document.getElementById("gen").addEventListener("click",()=>{
-  const token=buildToken();
-  if(!token){setStatus("Mark at least one line before generating.","err");return;}
-  const note=document.getElementById("note").value.trim();
+function showToken(token,note){
   document.getElementById("out").value=(note?note+"\n":"")+token;
   document.getElementById("outbox").style.display="block";
-  setStatus("Generated. The encoded line shows you no numbers.","ok");
-});
+}
 document.getElementById("copy").addEventListener("click",async()=>{
   const ta=document.getElementById("out");
   try{await navigator.clipboard.writeText(ta.value);setStatus("Copied. Paste into Notes and press Enter.","ok");}
@@ -266,18 +269,56 @@ async function saveEntries(a){
   return ok||true;
 }
 
+async function sendToRelay(payload){
+  const url=await idbGet("relay-url");
+  if(!url) return {sent:false,reason:"no-url"};
+  const secret=await idbGet("relay-secret")||"";
+  try{
+    await fetch(url,{method:"POST",mode:"no-cors",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(Object.assign({secret:secret},payload))});
+    return {sent:true}; // no-cors: opaque response, fire-and-forget
+  }catch(e){ return {sent:false,reason:"network"}; }
+}
 document.getElementById("save").addEventListener("click",async()=>{
   const marked=ALL.filter(s=>values[s.key]!=null);
-  if(!marked.length){setStatus("Mark at least one line before saving.","err");return;}
+  if(!marked.length){setStatus("Mark at least one line first.","err");return;}
   setStatus("Saving…");
+  const date=document.getElementById("date").value||todayStr();
+  const activity=document.getElementById("activity").value.trim();
+  const note=document.getElementById("note").value.trim();
+  const token=buildToken();
   const arr=await loadEntries();
-  arr.push({ts:Date.now(),date:document.getElementById("date").value||todayStr(),activity:document.getElementById("activity").value.trim(),values:{...values},note:document.getElementById("note").value.trim()});
-  const ok=await saveEntries(arr);
-  if(ok){setStatus("Saved to this device. Numbers stay hidden until a later session.","ok");clearForm(false);renderLog();}
-  else setStatus("Could not save — export CSV to be safe.","err");
+  arr.push({ts:Date.now(),date:date,activity:activity,values:{...values},note:note});
+  const okLocal=await saveEntries(arr);
+  const r=await sendToRelay({date:date,token:token,note:note});
+  if(r.sent){
+    clearInputs(); document.getElementById("outbox").style.display="none";
+    setStatus("Saved on device and sent to coach. Numbers stay hidden until a later session.","ok");
+  } else if(r.reason==="no-url"){
+    clearInputs(); showToken(token,note);
+    setStatus("Saved on device. No relay set up yet — paste this token into intervals.icu, or add a Relay URL in Settings.","ok");
+  } else {
+    clearInputs(); showToken(token,note);
+    setStatus("Saved on device, but send failed (offline?). Paste this token manually, or re-send later.","err");
+  }
+  if(!okLocal) setStatus("WARNING: device save failed — copy the token now to avoid losing it.","err");
+  renderLog();
 });
-function clearForm(msg){ALL.forEach(s=>clearScale(s.key));document.getElementById("note").value="";document.getElementById("activity").value="";document.getElementById("outbox").style.display="none";if(msg)setStatus("Form cleared.");}
+function clearInputs(){ALL.forEach(s=>clearScale(s.key));document.getElementById("note").value="";document.getElementById("activity").value="";}
+function clearForm(msg){clearInputs();document.getElementById("outbox").style.display="none";if(msg)setStatus("Form cleared.");}
 document.getElementById("reset").addEventListener("click",()=>clearForm(true));
+
+async function loadSettings(){
+  const u=await idbGet("relay-url"); const s=await idbGet("relay-secret");
+  if(u)document.getElementById("relayUrl").value=u;
+  if(s)document.getElementById("relaySecret").value=s;
+}
+document.getElementById("saveSettings").addEventListener("click",async()=>{
+  const u=document.getElementById("relayUrl").value.trim();
+  const s=document.getElementById("relaySecret").value.trim();
+  await idbSet("relay-url",u); await idbSet("relay-secret",s);
+  setStatus(u?"Settings saved. Save now sends automatically.":"Settings saved. No relay URL — manual token copy will be used.","ok");
+});
+loadSettings();
 
 function mean(a){return a.length?a.reduce((x,y)=>x+y,0)/a.length:null;}
 async function renderLog(){

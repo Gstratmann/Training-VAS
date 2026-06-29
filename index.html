@@ -10,7 +10,7 @@
     --rule:#cdd0c8; --track-empty:#d6d9d1; --needle:#d24b2b; --focus:#2f7d7a; --good:#2f7d7a;
   }
   *{box-sizing:border-box;}
-  html,body{margin:0;background:var(--paper);color:var(--ink);}
+  html,body{margin:0;background:var(--paper);color:var(--ink);overflow-x:hidden;max-width:100%;}
   body{font-family:ui-sans-serif,-apple-system,"Helvetica Neue",Arial,sans-serif;line-height:1.45;padding:24px 16px 90px;-webkit-font-smoothing:antialiased;}
   .wrap{max-width:760px;margin:0 auto;}
   .mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;}
@@ -30,13 +30,14 @@
   .scale-head{margin-bottom:13px;}
   .scale-name{font-size:15px;font-weight:600;}
   .scale-note{font-size:12px;color:var(--ink-2);font-weight:400;}
-  .vas-row{display:flex;align-items:center;gap:12px;}
-  .anchor{font-size:12px;color:var(--ink-2);width:96px;flex:none;}
+  /* full-width line that always fits the viewport; both ends always visible */
+  .scale-body{width:100%;max-width:560px;}
+  .anchors{display:flex;justify-content:space-between;gap:8px;margin-bottom:4px;}
+  .anchor{font-size:12px;color:var(--ink-2);max-width:48%;line-height:1.2;}
   .anchor.right{text-align:right;}
-  .track-box{flex:1;display:flex;justify-content:center;}
-  .track{position:relative;width:100mm;max-width:100%;height:40px;cursor:pointer;touch-action:none;}
+  .track{position:relative;width:100%;height:44px;cursor:pointer;touch-action:none;}
   .track-line{position:absolute;top:50%;left:0;right:0;height:3px;transform:translateY(-50%);background:var(--track-empty);border-radius:2px;}
-  .end{position:absolute;top:50%;width:2px;height:13px;transform:translateY(-50%);background:var(--ink-2);}
+  .end{position:absolute;top:50%;width:3px;height:18px;transform:translateY(-50%);background:var(--ink);border-radius:1px;}
   .end.l{left:0;} .end.r{right:0;}
   .needle{position:absolute;top:50%;width:2px;height:26px;transform:translate(-50%,-50%);background:var(--needle);display:none;}
   .needle::after{content:"";position:absolute;left:50%;top:-6px;width:9px;height:9px;transform:translateX(-50%) rotate(45deg);background:var(--needle);}
@@ -115,8 +116,8 @@
   </details>
 
   <p class="footnote">
-    Each line is a nominal 100&nbsp;mm; the value is the mark's position as 0–100, valid on any
-    screen. Scoring convention: 100 = most performance-favorable, 0 = least, on every scale.
+    The value is the mark's position along the full line as 0–100; the line always fits your
+    screen with both ends visible. Scoring convention: 100 = most performance-favorable, 0 = least, on every scale.
     Entries are stored on this device; export CSV to hand the data over for analysis. Opening the
     CSV reveals today's numbers — do that on a non-entry day to stay fully blind.
   </p>
@@ -165,14 +166,11 @@ function renderSection(title,subtitle,arr){
     const wrap=document.createElement("div"); wrap.className="scale";
     wrap.innerHTML=`
       <div class="scale-head"><span class="scale-name">${s.name}</span> ${s.note?`<span class="scale-note">${s.note}</span>`:""}</div>
-      <div class="vas-row">
-        <div class="anchor">${s.lo}</div>
-        <div class="track-box">
-          <div class="track" id="tr-${s.key}" role="slider" tabindex="0" aria-label="${s.name}" aria-valuetext="not marked">
-            <div class="track-line"></div><div class="end l"></div><div class="end r"></div><div class="needle" id="nd-${s.key}"></div>
-          </div>
+      <div class="scale-body">
+        <div class="anchors"><span class="anchor">${s.lo}</span><span class="anchor right">${s.hi}</span></div>
+        <div class="track" id="tr-${s.key}" role="slider" tabindex="0" aria-label="${s.name}" aria-valuetext="not marked">
+          <div class="track-line"></div><div class="end l"></div><div class="end r"></div><div class="needle" id="nd-${s.key}"></div>
         </div>
-        <div class="anchor right">${s.hi}</div>
       </div>
       <div class="scale-foot"><span class="mark-state" id="ms-${s.key}">not marked</span><button class="skip" id="sk-${s.key}">skip / clear</button></div>`;
     sec.appendChild(wrap);

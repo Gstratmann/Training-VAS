@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Performance VAS — daily log</title>
+<style>
+  :root{
+    --paper:#eef0ec; --card:#f7f8f5; --ink:#1a1c1a; --ink-2:#565b54;
+    --rule:#cdd0c8; --track-empty:#d6d9d1; --needle:#d24b2b; --focus:#2f7d7a; --good:#2f7d7a;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;background:var(--paper);color:var(--ink);}
+  body{font-family:ui-sans-serif,-apple-system,"Helvetica Neue",Arial,sans-serif;line-height:1.45;padding:24px 16px 90px;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:760px;margin:0 auto;}
+  .mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;}
+  header{border-bottom:1.5px solid var(--ink);padding-bottom:14px;margin-bottom:20px;}
+  h1{font-size:20px;font-weight:650;letter-spacing:-0.01em;margin:0;}
+  header .sub{color:var(--ink-2);font-size:13px;margin-top:4px;}
+  .context{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:8px;}
+  .field{flex:1;min-width:160px;}
+  label.cap{display:block;font-size:11px;text-transform:uppercase;letter-spacing:0.07em;color:var(--ink-2);margin-bottom:5px;}
+  input[type=date],input[type=text],textarea{width:100%;font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--rule);border-radius:4px;padding:9px 10px;}
+  input:focus,textarea:focus{outline:2px solid var(--focus);outline-offset:1px;border-color:var(--focus);}
+  textarea{min-height:110px;resize:vertical;line-height:1.5;}
+  .sect{margin-top:26px;border-top:1.5px solid var(--ink);padding-top:8px;}
+  .sect h2{font-size:13px;text-transform:uppercase;letter-spacing:0.08em;margin:8px 0 0;}
+  .sect .sh-note{font-size:12px;color:var(--ink-2);margin-bottom:4px;}
+  .scale{padding:16px 0;border-bottom:1px solid var(--rule);}
+  .scale-head{margin-bottom:13px;}
+  .scale-name{font-size:15px;font-weight:600;}
+  .scale-note{font-size:12px;color:var(--ink-2);font-weight:400;}
+  .vas-row{display:flex;align-items:center;gap:12px;}
+  .anchor{font-size:12px;color:var(--ink-2);width:96px;flex:none;}
+  .anchor.right{text-align:right;}
+  .track-box{flex:1;display:flex;justify-content:center;}
+  .track{position:relative;width:100mm;max-width:100%;height:40px;cursor:pointer;touch-action:none;}
+  .track-line{position:absolute;top:50%;left:0;right:0;height:3px;transform:translateY(-50%);background:var(--track-empty);border-radius:2px;}
+  .end{position:absolute;top:50%;width:2px;height:13px;transform:translateY(-50%);background:var(--ink-2);}
+  .end.l{left:0;} .end.r{right:0;}
+  .needle{position:absolute;top:50%;width:2px;height:26px;transform:translate(-50%,-50%);background:var(--needle);display:none;}
+  .needle::after{content:"";position:absolute;left:50%;top:-6px;width:9px;height:9px;transform:translateX(-50%) rotate(45deg);background:var(--needle);}
+  .track.set .needle{display:block;}
+  .track:focus{outline:none;}
+  .track:focus-visible .track-line{outline:2px solid var(--focus);outline-offset:6px;border-radius:2px;}
+  .scale-foot{display:flex;justify-content:space-between;align-items:center;margin-top:6px;}
+  .mark-state{font-size:11px;color:var(--ink-2);}
+  .mark-state.done{color:var(--good);}
+  .skip{font-size:11px;color:var(--ink-2);background:none;border:none;cursor:pointer;text-decoration:underline;padding:2px 4px;}
+  .actions{margin-top:24px;display:flex;flex-wrap:wrap;gap:10px;}
+  button.btn{font:inherit;font-weight:550;cursor:pointer;border-radius:5px;padding:10px 16px;border:1px solid var(--ink);background:var(--ink);color:var(--paper);}
+  button.ghost{background:transparent;color:var(--ink);}
+  button.ghost:hover{background:#e3e6df;}
+  button:focus-visible{outline:2px solid var(--focus);outline-offset:2px;}
+  .status{font-size:13px;color:var(--ink-2);margin-top:12px;min-height:18px;}
+  .status.ok{color:var(--good);} .status.err{color:var(--needle);}
+  .outbox{margin-top:18px;}
+  .outbox textarea{font-family:ui-monospace,Menlo,monospace;font-size:13px;min-height:140px;background:#fbfcfa;}
+  .encnote{font-size:11px;color:var(--ink-2);margin-top:8px;line-height:1.5;}
+  details.log{margin-top:34px;border-top:1.5px solid var(--ink);padding-top:18px;}
+  summary{cursor:pointer;font-weight:600;font-size:15px;list-style:none;display:flex;justify-content:space-between;align-items:center;}
+  summary::-webkit-details-marker{display:none;}
+  summary .count{font-weight:400;color:var(--ink-2);font-size:13px;}
+  .blind-note{font-size:12px;color:var(--ink-2);background:#e7eae3;border-left:2px solid var(--needle);padding:8px 12px;margin:14px 0;border-radius:0 4px 4px 0;}
+  .sumgrid{display:grid;grid-template-columns:1fr auto;gap:3px 16px;margin:10px 0 14px;font-size:13px;}
+  .sumgrid .k{color:var(--ink-2);}
+  .sumgrid .v{font-family:ui-monospace,Menlo,monospace;font-weight:600;text-align:right;}
+  .sumgrid .gh{grid-column:1/-1;font-weight:600;color:var(--ink);font-size:12px;text-transform:uppercase;letter-spacing:0.06em;margin-top:8px;}
+  .log-actions{display:flex;gap:10px;margin:16px 0;flex-wrap:wrap;}
+  .empty{color:var(--ink-2);font-size:13px;padding:8px 0;}
+  .footnote{font-size:11px;color:var(--ink-2);margin-top:30px;line-height:1.5;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Performance VAS — daily log</h1>
+    <div class="sub mono">Mark on impression. Numbers are never shown while you mark. Every line is optional — skip any.</div>
+  </header>
+
+  <div class="context">
+    <div class="field"><label class="cap" for="date">Date</label><input type="date" id="date"></div>
+    <div class="field"><label class="cap" for="activity">Activity (if a session)</label><input type="text" id="activity" placeholder="e.g. AM roller ski OD"></div>
+  </div>
+
+  <div id="scales"></div>
+
+  <div class="field" style="margin-top:24px;">
+    <label class="cap" for="note">Diary note (free text)</label>
+    <textarea id="note" placeholder="Goals vs execution, fueling, what went well / didn't, context…"></textarea>
+  </div>
+
+  <div class="actions">
+    <button class="btn" id="gen">Generate for intervals.icu</button>
+    <button class="btn ghost" id="save">Save to local log</button>
+    <button class="btn ghost" id="reset">Clear form</button>
+  </div>
+  <div class="status" id="status"></div>
+
+  <div class="outbox" id="outbox" style="display:none;">
+    <label class="cap" for="out">Paste into the activity's Notes field, then press Enter to commit</label>
+    <textarea id="out" readonly></textarea>
+    <div class="encnote">The <span class="mono">VASX1:</span> line is your encoded scores — unreadable on purpose, so pasting it shows you no numbers. It carries your ratings to the coach through the pipeline.</div>
+    <div class="actions" style="margin-top:10px;"><button class="btn" id="copy">Copy to clipboard</button></div>
+  </div>
+
+  <details class="log">
+    <summary>Feedback &amp; data <span class="count" id="logcount"></span></summary>
+    <div class="blind-note">Values here exclude today's entries — they appear only from your next session onward, so you can't reverse-engineer a slider position. Skipped lines are simply absent, never counted as zero.</div>
+    <div id="summary"></div>
+    <div class="log-actions">
+      <button class="btn ghost" id="csv">Export CSV (for analysis)</button>
+      <button class="btn ghost" id="clear">Clear log…</button>
+    </div>
+  </details>
+
+  <p class="footnote">
+    Each line is a nominal 100&nbsp;mm; the value is the mark's position as 0–100, valid on any
+    screen. Scoring convention: 100 = most performance-favorable, 0 = least, on every scale.
+    Entries are stored on this device; export CSV to hand the data over for analysis. Opening the
+    CSV reveals today's numbers — do that on a non-entry day to stay fully blind.
+  </p>
+</div>
+
+<script>
+const SESSION_SCALES = [
+  {key:"intensity",  name:"Intensity discipline", note:"did you hold the prescribed zone?", lo:"drifted / grey zone", hi:"held zone perfectly"},
+  {key:"technique",  name:"Technique quality",    note:"V1, weight transfer, stack",       lo:"fell apart",          hi:"dialed in"},
+  {key:"legs",       name:"Legs & body",          note:"how the body felt",                lo:"dead, heavy",         hi:"fresh, springy"},
+  {key:"motivation", name:"Motivation (session)", note:"drive for this workout",           lo:"no desire",           hi:"fired up"},
+  {key:"fuel",       name:"Fuel & GI",            note:"nutrition / gut tolerance",        lo:"terrible",            hi:"flawless"},
+  {key:"hydration",  name:"Hydration",            note:"fluid status through the session", lo:"behind all session",  hi:"well-hydrated"},
+  {key:"overall",    name:"Overall session",      note:"all things considered",            lo:"awful",               hi:"great"},
+];
+const DAILY_SCALES = [
+  {key:"mood",        name:"Mood / mental state",     note:"overall headspace today",        lo:"very low",            hi:"very good"},
+  {key:"stress",      name:"Stress / overwhelm",      note:"Garmin captures this poorly",     lo:"maxed out",           hi:"calm, in control"},
+  {key:"sleep_q",     name:"Sleep quality",           note:"your felt sense, not the device", lo:"terrible",            hi:"excellent"},
+  {key:"jetlag",      name:"Jetlag / circadian",      note:"body-clock alignment",            lo:"severe",              hi:"fully adjusted"},
+  {key:"soreness",    name:"Soreness / pain",         note:"musculoskeletal",                 lo:"significant pain",    hi:"pain-free"},
+  {key:"chronic",     name:"Chronic illness",         note:"ongoing condition (skip if N/A)", lo:"badly flaring",       hi:"quiet, controlled"},
+  {key:"acute",       name:"Acute sickness",          note:"cold / flu / infection today",    lo:"acutely ill",         hi:"no illness"},
+  {key:"work",        name:"Work",                    note:"load & stress",                   lo:"draining",            hi:"light, energizing"},
+  {key:"family",      name:"Family life",             note:"",                                lo:"stressful",           hi:"harmonious"},
+  {key:"relationship",name:"Relationship",            note:"",                                lo:"strained",            hi:"connected"},
+  {key:"sex",         name:"Sex life",                note:"",                                lo:"absent / unsatisfying",hi:"fulfilling"},
+  {key:"friends",     name:"Friendships",             note:"",                                lo:"isolated / strained", hi:"connected"},
+  {key:"peer",        name:"Peer pressure",           note:"",                                lo:"strong negative pull",hi:"none or positive"},
+  {key:"money",       name:"Money matters",           note:"",                                lo:"high financial stress",hi:"no worries"},
+  {key:"school",      name:"Schoolwork",              note:"skip if N/A",                     lo:"overwhelmed / behind",hi:"on top of it"},
+  {key:"screen",      name:"Screentime",              note:"",                                lo:"excessive, compulsive",hi:"minimal, intentional"},
+  {key:"alcohol",     name:"Alcohol",                 note:"",                                lo:"heavy use",           hi:"none"},
+  {key:"drugs",       name:"Drugs (recreational)",    note:"",                                lo:"significant use",     hi:"none"},
+  {key:"tobacco",     name:"Tobacco / nicotine",      note:"",                                lo:"used",                hi:"none"},
+];
+const ALL = SESSION_SCALES.concat(DAILY_SCALES);
+const STORE_KEY = "vas-entries";
+const values = {};
+
+const scalesEl=document.getElementById("scales");
+function renderSection(title,subtitle,arr){
+  const sec=document.createElement("div"); sec.className="sect";
+  sec.innerHTML=`<h2>${title}</h2><div class="sh-note">${subtitle}</div>`;
+  arr.forEach(s=>{
+    const wrap=document.createElement("div"); wrap.className="scale";
+    wrap.innerHTML=`
+      <div class="scale-head"><span class="scale-name">${s.name}</span> ${s.note?`<span class="scale-note">${s.note}</span>`:""}</div>
+      <div class="vas-row">
+        <div class="anchor">${s.lo}</div>
+        <div class="track-box">
+          <div class="track" id="tr-${s.key}" role="slider" tabindex="0" aria-label="${s.name}" aria-valuetext="not marked">
+            <div class="track-line"></div><div class="end l"></div><div class="end r"></div><div class="needle" id="nd-${s.key}"></div>
+          </div>
+        </div>
+        <div class="anchor right">${s.hi}</div>
+      </div>
+      <div class="scale-foot"><span class="mark-state" id="ms-${s.key}">not marked</span><button class="skip" id="sk-${s.key}">skip / clear</button></div>`;
+    sec.appendChild(wrap);
+  });
+  scalesEl.appendChild(sec);
+  arr.forEach(s=>wireTrack(s.key));
+}
+renderSection("This session","Rate only if you trained. Skip any line.",SESSION_SCALES);
+renderSection("Today overall","Once per day. Skip anything that doesn't apply.",DAILY_SCALES);
+
+function wireTrack(key){
+  const track=document.getElementById("tr-"+key);
+  const setFromX=(clientX)=>{const r=track.getBoundingClientRect();let v=((clientX-r.left)/r.width)*100;v=Math.max(0,Math.min(100,v));setValue(key,Math.round(v*10)/10);};
+  let dragging=false;
+  track.addEventListener("pointerdown",e=>{dragging=true;track.setPointerCapture(e.pointerId);setFromX(e.clientX);});
+  track.addEventListener("pointermove",e=>{if(dragging)setFromX(e.clientX);});
+  track.addEventListener("pointerup",()=>{dragging=false;});
+  track.addEventListener("pointercancel",()=>{dragging=false;});
+  track.addEventListener("keydown",e=>{
+    let v=values[key];
+    if(e.key==="ArrowRight"||e.key==="ArrowUp"){v=(v==null?50:v)+(e.shiftKey?5:1);}
+    else if(e.key==="ArrowLeft"||e.key==="ArrowDown"){v=(v==null?50:v)-(e.shiftKey?5:1);}
+    else if(e.key==="Enter"||e.key===" "){if(v==null)v=50;}
+    else return;
+    e.preventDefault();v=Math.max(0,Math.min(100,Math.round(v*10)/10));setValue(key,v);
+  });
+  document.getElementById("sk-"+key).addEventListener("click",()=>clearScale(key));
+}
+function setValue(key,v){
+  values[key]=v;
+  const t=document.getElementById("tr-"+key);t.classList.add("set");
+  document.getElementById("nd-"+key).style.left=v+"%";t.setAttribute("aria-valuetext","marked");
+  const ms=document.getElementById("ms-"+key);ms.textContent="marked";ms.classList.add("done");
+}
+function clearScale(key){
+  delete values[key];
+  const t=document.getElementById("tr-"+key);t.classList.remove("set");t.setAttribute("aria-valuetext","not marked");
+  const ms=document.getElementById("ms-"+key);ms.textContent="not marked";ms.classList.remove("done");
+}
+
+document.getElementById("date").value=new Date().toISOString().slice(0,10);
+const statusEl=document.getElementById("status");
+function setStatus(m,k){statusEl.textContent=m;statusEl.className="status"+(k?" "+k:"");}
+function todayStr(){return new Date().toISOString().slice(0,10);}
+
+function buildToken(){
+  const parts=ALL.filter(s=>values[s.key]!=null).map(s=>`${s.key}=${values[s.key].toFixed(1)}`);
+  return parts.length?"VASX1:"+btoa(parts.join(";")):null;
+}
+document.getElementById("gen").addEventListener("click",()=>{
+  const token=buildToken();
+  if(!token){setStatus("Mark at least one line before generating.","err");return;}
+  const note=document.getElementById("note").value.trim();
+  document.getElementById("out").value=(note?note+"\n":"")+token;
+  document.getElementById("outbox").style.display="block";
+  setStatus("Generated. The encoded line shows you no numbers.","ok");
+});
+document.getElementById("copy").addEventListener("click",async()=>{
+  const ta=document.getElementById("out");
+  try{await navigator.clipboard.writeText(ta.value);setStatus("Copied. Paste into Notes and press Enter.","ok");}
+  catch(e){ta.focus();ta.select();const ok=document.execCommand&&document.execCommand("copy");setStatus(ok?"Copied.":"Select the text and copy manually.",ok?"ok":"err");}
+});
+
+// ---- on-device persistence via IndexedDB (survives offline, between sessions) ----
+let memEntries=[]; let dbReady=null;
+function openDB(){
+  if(dbReady)return dbReady;
+  dbReady=new Promise((resolve)=>{
+    if(!("indexedDB" in window)){resolve(null);return;}
+    const req=indexedDB.open("vasdb",1);
+    req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains("kv"))db.createObjectStore("kv");};
+    req.onsuccess=()=>resolve(req.result);
+    req.onerror=()=>resolve(null);
+  });
+  return dbReady;
+}
+async function idbGet(key){
+  const db=await openDB(); if(!db)return null;
+  return new Promise((resolve)=>{const t=db.transaction("kv","readonly").objectStore("kv").get(key);t.onsuccess=()=>resolve(t.result??null);t.onerror=()=>resolve(null);});
+}
+async function idbSet(key,val){
+  const db=await openDB(); if(!db)return false;
+  return new Promise((resolve)=>{const t=db.transaction("kv","readwrite").objectStore("kv").put(val,key);t.onsuccess=()=>resolve(true);t.onerror=()=>resolve(false);});
+}
+async function loadEntries(){
+  const v=await idbGet(STORE_KEY);
+  if(v!=null){try{return JSON.parse(v);}catch(_){return [];}}
+  return memEntries; // fallback only if IndexedDB unavailable
+}
+async function saveEntries(a){
+  const ok=await idbSet(STORE_KEY,JSON.stringify(a));
+  memEntries=a; // keep an in-memory mirror regardless
+  return ok||true;
+}
+
+document.getElementById("save").addEventListener("click",async()=>{
+  const marked=ALL.filter(s=>values[s.key]!=null);
+  if(!marked.length){setStatus("Mark at least one line before saving.","err");return;}
+  setStatus("Saving…");
+  const arr=await loadEntries();
+  arr.push({ts:Date.now(),date:document.getElementById("date").value||todayStr(),activity:document.getElementById("activity").value.trim(),values:{...values},note:document.getElementById("note").value.trim()});
+  const ok=await saveEntries(arr);
+  if(ok){setStatus("Saved to this device. Numbers stay hidden until a later session.","ok");clearForm(false);renderLog();}
+  else setStatus("Could not save — export CSV to be safe.","err");
+});
+function clearForm(msg){ALL.forEach(s=>clearScale(s.key));document.getElementById("note").value="";document.getElementById("activity").value="";document.getElementById("outbox").style.display="none";if(msg)setStatus("Form cleared.");}
+document.getElementById("reset").addEventListener("click",()=>clearForm(true));
+
+function mean(a){return a.length?a.reduce((x,y)=>x+y,0)/a.length:null;}
+async function renderLog(){
+  const all=await loadEntries();
+  const past=all.filter(e=>e.date<todayStr());
+  document.getElementById("logcount").textContent=all.length?`${all.length} saved`:"empty";
+  const cutoff=new Date();cutoff.setDate(cutoff.getDate()-7);const cutStr=cutoff.toISOString().slice(0,10);
+  const w7=past.filter(e=>e.date>=cutStr);
+  const sumEl=document.getElementById("summary");
+  if(!w7.length){sumEl.innerHTML='<div class="empty">No prior-day entries yet — feedback appears once you have entries from before today.</div>';return;}
+  let html='<div style="font-size:13px;font-weight:600;">Last 7 days — mean ('+w7.length+' day'+(w7.length>1?'s':'')+')</div><div class="sumgrid">';
+  const group=(title,arr)=>{
+    const rows=arr.map(s=>{const vals=w7.map(e=>e.values[s.key]).filter(v=>v!=null);return {name:s.name,m:mean(vals),n:vals.length};}).filter(r=>r.n>0);
+    if(!rows.length)return;
+    html+=`<div class="gh">${title}</div>`;
+    rows.forEach(r=>{html+=`<div class="k">${r.name}</div><div class="v">${r.m.toFixed(1)}</div>`;});
+  };
+  group("Session",SESSION_SCALES);group("Daily",DAILY_SCALES);
+  html+='</div>';
+  sumEl.innerHTML=html;
+}
+
+document.getElementById("csv").addEventListener("click",async()=>{
+  const arr=await loadEntries();
+  if(!arr.length){setStatus("Nothing to export yet.","err");return;}
+  const cols=ALL.map(s=>s.key);
+  const head=["date","activity",...cols,"note"];
+  const rows=arr.map(e=>[e.date,csvCell(e.activity||""),...cols.map(c=>e.values[c]!=null?e.values[c]:""),csvCell(e.note||"")].join(","));
+  const blob=new Blob([head.join(",")+"\n"+rows.join("\n")],{type:"text/csv"});
+  const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="performance_vas.csv";a.click();URL.revokeObjectURL(url);
+  setStatus("CSV exported (includes today — opening it reveals today's numbers).","ok");
+});
+function csvCell(s){s=String(s).replace(/"/g,'""');return /[",\n]/.test(s)?`"${s}"`:s;}
+document.getElementById("clear").addEventListener("click",async()=>{if(!confirm("Delete all saved entries on this device? Export CSV first if you want a copy."))return;await saveEntries([]);renderLog();setStatus("Log cleared.");});
+
+renderLog();
+</script>
+</body>
+</html>

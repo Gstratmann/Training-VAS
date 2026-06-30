@@ -77,6 +77,8 @@
   .sumgrid .gh{grid-column:1/-1;font-weight:600;color:var(--ink);font-size:12px;text-transform:uppercase;letter-spacing:0.06em;margin-top:8px;}
   .log-actions{display:flex;gap:10px;margin:16px 0;flex-wrap:wrap;}
   .empty{color:var(--ink-2);font-size:13px;padding:8px 0;}
+  .daily-banner{margin-top:26px;border-top:1.5px solid var(--ink);padding-top:14px;display:flex;justify-content:space-between;align-items:center;font-size:14px;color:var(--good);font-weight:600;}
+  .daily-banner button{font:inherit;font-weight:550;color:var(--ink);background:transparent;border:1px solid var(--rule);border-radius:5px;padding:6px 12px;cursor:pointer;}
   .footnote{font-size:11px;color:var(--ink-2);margin-top:30px;line-height:1.5;}
 </style>
 </head>
@@ -170,12 +172,11 @@ const DAILY_SCALES = [
   {key:"tobacco",     name:"Tobacco / nicotine",      note:"",                                lo:"used",                hi:"none"},
 ];
 const ALL = SESSION_SCALES.concat(DAILY_SCALES);
-const STORE_KEY = "vas-entries";
 const values = {};
 
 const scalesEl=document.getElementById("scales");
-function renderSection(title,subtitle,arr){
-  const sec=document.createElement("div"); sec.className="sect";
+function renderSection(title,subtitle,arr,sectId){
+  const sec=document.createElement("div"); sec.className="sect"; if(sectId)sec.id=sectId;
   sec.innerHTML=`<h2>${title}</h2><div class="sh-note">${subtitle}</div>`;
   arr.forEach(s=>{
     const wrap=document.createElement("div"); wrap.className="scale";
@@ -195,8 +196,14 @@ function renderSection(title,subtitle,arr){
   scalesEl.appendChild(sec);
   arr.forEach(s=>wireTrack(s.key));
 }
-renderSection("This session","Rate only if you trained. Skip any line.",SESSION_SCALES);
-renderSection("Today overall","Once per day. Skip anything that doesn't apply.",DAILY_SCALES);
+renderSection("This session","Rate only if you trained. Skip any line.",SESSION_SCALES,"sessSect");
+// collapsed-state banner for the daily section (shown once daily is logged for the day)
+const dailyBanner=document.createElement("div");
+dailyBanner.id="dailyBanner"; dailyBanner.className="daily-banner"; dailyBanner.style.display="none";
+dailyBanner.innerHTML='<span>✓ Daily assessment logged today</span><button id="editDaily">Edit</button>';
+scalesEl.appendChild(dailyBanner);
+renderSection("Today overall","Once per day. Skip anything that doesn't apply.",DAILY_SCALES,"dailySect");
+document.getElementById("editDaily").addEventListener("click",editDaily);
 
 function wireTrack(key){
   const track=document.getElementById("tr-"+key);
@@ -251,7 +258,7 @@ document.getElementById("copy").addEventListener("click",async()=>{
 });
 
 // ---- on-device persistence via IndexedDB (survives offline, between sessions) ----
-let memEntries=[]; let dbReady=null;
+let dbReady=null;
 function openDB(){
   if(dbReady)return dbReady;
   dbReady=new Promise((resolve)=>{
@@ -271,15 +278,59 @@ async function idbSet(key,val){
   const db=await openDB(); if(!db)return false;
   return new Promise((resolve)=>{const t=db.transaction("kv","readwrite").objectStore("kv").put(val,key);t.onsuccess=()=>resolve(true);t.onerror=()=>resolve(false);});
 }
-async function loadEntries(){
-  const v=await idbGet(STORE_KEY);
-  if(v!=null){try{return JSON.parse(v);}catch(_){return [];}}
-  return memEntries; // fallback only if IndexedDB unavailable
+// ---- daily (once-per-day, updatable) + sessions (per-session, append) ----
+const DAILY_KEY="vas-daily";     // { "YYYY-MM-DD": {ts, values:{daily keys}, note} }
+const SESS_KEY="vas-sessions";   // [ {ts,date,activity,values:{session keys},note} ]
+const OLD_KEY="vas-entries";     // legacy single array (migrated once)
+const DAILY_KEYS=DAILY_SCALES.map(s=>s.key);
+const SESSION_KEYS=SESSION_SCALES.map(s=>s.key);
+let editingDaily=false;
+
+async function loadDaily(){const v=await idbGet(DAILY_KEY);if(v!=null){try{return JSON.parse(v);}catch(_){return {};}}return {};}
+async function saveDaily(o){return await idbSet(DAILY_KEY,JSON.stringify(o));}
+async function loadSessions(){const v=await idbGet(SESS_KEY);if(v!=null){try{return JSON.parse(v);}catch(_){return [];}}return [];}
+async function saveSessions(a){return await idbSet(SESS_KEY,JSON.stringify(a));}
+
+// one-time migration of any legacy vas-entries into the daily/session model
+async function migrateOld(){
+  const v=await idbGet(OLD_KEY); if(v==null||v==="") return;
+  let arr; try{arr=JSON.parse(v);}catch(_){arr=null;}
+  if(!Array.isArray(arr)||!arr.length){await idbSet(OLD_KEY,"");return;}
+  const daily=await loadDaily(); const sessions=await loadSessions();
+  arr.forEach(e=>{
+    const dvals={},svals={};
+    Object.keys(e.values||{}).forEach(k=>{ if(DAILY_KEYS.includes(k))dvals[k]=e.values[k]; else if(SESSION_KEYS.includes(k))svals[k]=e.values[k]; });
+    if(Object.keys(dvals).length){ const d=daily[e.date]||{ts:e.ts,values:{},note:""}; d.values=Object.assign(d.values||{},dvals); d.ts=e.ts||Date.now(); if(e.note&&!Object.keys(svals).length)d.note=e.note; daily[e.date]=d; }
+    if(Object.keys(svals).length){ sessions.push({ts:e.ts||Date.now(),date:e.date,activity:e.activity||"",values:svals,note:e.note||""}); }
+  });
+  await saveDaily(daily); await saveSessions(sessions); await idbSet(OLD_KEY,"");
 }
-async function saveEntries(a){
-  const ok=await idbSet(STORE_KEY,JSON.stringify(a));
-  memEntries=a; // keep an in-memory mirror regardless
-  return ok||true;
+
+// show full daily section until today's daily is logged; then collapse to a banner
+async function updateDailyVisibility(){
+  const daily=await loadDaily();
+  const rec=daily[todayStr()];
+  const has=rec && Object.keys(rec.values||{}).length>0;
+  const sect=document.getElementById("dailySect");
+  const banner=document.getElementById("dailyBanner");
+  if(has && !editingDaily){ sect.style.display="none"; banner.style.display="flex"; }
+  else { sect.style.display=""; banner.style.display="none"; }
+}
+// session form is always available; header reflects how many sessions are already logged today
+async function updateSessionHeader(){
+  const sessions=await loadSessions();
+  const n=sessions.filter(s=>s.date===todayStr()).length;
+  const note=document.querySelector("#sessSect .sh-note");
+  if(note) note.textContent = n===0
+    ? "Rate only if you trained. Skip any line."
+    : `${n} session${n>1?"s":""} logged today — this is session ${n+1}. Skip any line.`;
+}
+async function editDaily(){
+  editingDaily=true;
+  const daily=await loadDaily(); const rec=daily[todayStr()];
+  if(rec&&rec.values){ Object.keys(rec.values).forEach(k=>{ if(values[k]==null) setValue(k,rec.values[k]); }); }
+  await updateDailyVisibility();
+  document.getElementById("dailySect").scrollIntoView({behavior:"smooth",block:"start"});
 }
 
 async function sendToRelay(payload){
@@ -292,29 +343,43 @@ async function sendToRelay(payload){
   }catch(e){ return {sent:false,reason:"network"}; }
 }
 document.getElementById("save").addEventListener("click",async()=>{
-  const marked=ALL.filter(s=>values[s.key]!=null);
-  if(!marked.length){setStatus("Mark at least one line first.","err");return;}
+  const dMarks={},sMarks={};
+  DAILY_SCALES.forEach(s=>{if(values[s.key]!=null)dMarks[s.key]=values[s.key];});
+  SESSION_SCALES.forEach(s=>{if(values[s.key]!=null)sMarks[s.key]=values[s.key];});
+  const nD=Object.keys(dMarks).length, nS=Object.keys(sMarks).length;
+  if(!nD&&!nS){setStatus("Mark at least one line first.","err");return;}
   setStatus("Saving…");
   const date=document.getElementById("date").value||todayStr();
   const activity=document.getElementById("activity").value.trim();
   const note=document.getElementById("note").value.trim();
   const token=buildToken();
-  const arr=await loadEntries();
-  arr.push({ts:Date.now(),date:date,activity:activity,values:{...values},note:note});
-  const okLocal=await saveEntries(arr);
-  const r=await sendToRelay({date:date,token:token,note:note});
-  if(r.sent){
-    clearInputs(); document.getElementById("outbox").style.display="none";
-    setStatus("Saved on device and sent to coach. Numbers stay hidden until a later session.","ok");
-  } else if(r.reason==="no-url"){
-    clearInputs(); showToken(token,note);
-    setStatus("Saved on device. No relay set up yet — paste this token into intervals.icu, or add a Relay URL in Settings.","ok");
-  } else {
-    clearInputs(); showToken(token,note);
-    setStatus("Saved on device, but send failed (offline?). Paste this token manually, or re-send later.","err");
+  let okLocal=true; let sessNum=null;
+  if(nD){ // upsert today's single daily record (merge marked scales in)
+    const daily=await loadDaily();
+    const d=daily[date]||{ts:Date.now(),values:{},note:""};
+    d.values=Object.assign(d.values||{},dMarks); d.ts=Date.now(); if(note&&!nS)d.note=note;
+    daily[date]=d; okLocal=(await saveDaily(daily))&&okLocal;
   }
+  if(nS){ // append a new session (unlimited per day)
+    const sessions=await loadSessions();
+    sessions.push({ts:Date.now(),date:date,activity:activity,values:sMarks,note:note});
+    okLocal=(await saveSessions(sessions))&&okLocal;
+    sessNum=sessions.filter(s=>s.date===date).length;
+  }
+  const parts=[];
+  if(nD) parts.push(editingDaily?"daily updated":"daily logged");
+  if(nS) parts.push("session "+sessNum+" logged");
+  const what=parts.join(", ").replace(/^./,c=>c.toUpperCase());
+  const nextMsg = nS ? " Next session is ready below." : "";
+  const r=await sendToRelay({date:date,token:token,note:note});
+  if(r.sent){ document.getElementById("outbox").style.display="none";
+    setStatus(what+" & sent to coach."+nextMsg,"ok"); }
+  else if(r.reason==="no-url"){ showToken(token,note);
+    setStatus(what+" on device. No relay set up — paste this token, or add a Relay URL in Settings.","ok"); }
+  else { showToken(token,note);
+    setStatus(what+" on device, but send failed (offline?). Paste this token manually, or re-send later.","err"); }
   if(!okLocal) setStatus("WARNING: device save failed — copy the token now to avoid losing it.","err");
-  renderLog();
+  clearInputs(); editingDaily=false; await updateDailyVisibility(); await updateSessionHeader(); renderLog();
 });
 function clearInputs(){ALL.forEach(s=>clearScale(s.key));document.getElementById("note").value="";document.getElementById("activity").value="";}
 function clearForm(msg){clearInputs();document.getElementById("outbox").style.display="none";if(msg)setStatus("Form cleared.");}
@@ -335,39 +400,54 @@ loadSettings();
 
 function mean(a){return a.length?a.reduce((x,y)=>x+y,0)/a.length:null;}
 async function renderLog(){
-  const all=await loadEntries();
-  const past=all.filter(e=>e.date<todayStr());
-  document.getElementById("logcount").textContent=all.length?`${all.length} saved`:"empty";
+  const daily=await loadDaily(); const sessions=await loadSessions();
+  const today=todayStr();
   const cutoff=new Date();cutoff.setDate(cutoff.getDate()-7);const cutStr=cutoff.toISOString().slice(0,10);
-  const w7=past.filter(e=>e.date>=cutStr);
+  const total=Object.keys(daily).length+sessions.length;
+  document.getElementById("logcount").textContent=total?`${total} saved`:"empty";
+  const pastSess=sessions.filter(s=>s.date<today && s.date>=cutStr);
+  const pastDailyDates=Object.keys(daily).filter(d=>d<today && d>=cutStr);
   const sumEl=document.getElementById("summary");
-  if(!w7.length){sumEl.innerHTML='<div class="empty">No prior-day entries yet — feedback appears once you have entries from before today.</div>';return;}
-  let html='<div style="font-size:13px;font-weight:600;">Last 7 days — mean ('+w7.length+' day'+(w7.length>1?'s':'')+')</div><div class="sumgrid">';
-  const group=(title,arr)=>{
-    const rows=arr.map(s=>{const vals=w7.map(e=>e.values[s.key]).filter(v=>v!=null);return {name:s.name,m:mean(vals),n:vals.length};}).filter(r=>r.n>0);
-    if(!rows.length)return;
-    html+=`<div class="gh">${title}</div>`;
-    rows.forEach(r=>{html+=`<div class="k">${r.name}</div><div class="v">${r.m.toFixed(1)}</div>`;});
-  };
-  group("Session",SESSION_SCALES);group("Daily",DAILY_SCALES);
-  html+='</div>';
-  sumEl.innerHTML=html;
+  if(!pastSess.length && !pastDailyDates.length){
+    sumEl.innerHTML='<div class="empty">No prior-day entries yet — feedback appears once you have entries from before today.</div>';return;
+  }
+  let html='<div style="font-size:13px;font-weight:600;">Last 7 days — mean</div><div class="sumgrid">';
+  const srows=SESSION_SCALES.map(s=>{const vals=pastSess.map(e=>e.values[s.key]).filter(v=>v!=null);return{name:s.name,m:mean(vals),n:vals.length};}).filter(r=>r.n>0);
+  if(srows.length){ html+=`<div class="gh">Session (${pastSess.length})</div>`; srows.forEach(r=>html+=`<div class="k">${r.name}</div><div class="v">${r.m.toFixed(1)}</div>`); }
+  const drows=DAILY_SCALES.map(s=>{const vals=pastDailyDates.map(d=>daily[d].values[s.key]).filter(v=>v!=null);return{name:s.name,m:mean(vals),n:vals.length};}).filter(r=>r.n>0);
+  if(drows.length){ html+=`<div class="gh">Daily (${pastDailyDates.length})</div>`; drows.forEach(r=>html+=`<div class="k">${r.name}</div><div class="v">${r.m.toFixed(1)}</div>`); }
+  html+='</div>'; sumEl.innerHTML=html;
 }
 
 document.getElementById("csv").addEventListener("click",async()=>{
-  const arr=await loadEntries();
-  if(!arr.length){setStatus("Nothing to export yet.","err");return;}
-  const cols=ALL.map(s=>s.key);
-  const head=["date","activity",...cols,"note"];
-  const rows=arr.map(e=>[e.date,csvCell(e.activity||""),...cols.map(c=>e.values[c]!=null?e.values[c]:""),csvCell(e.note||"")].join(","));
-  const blob=new Blob([head.join(",")+"\n"+rows.join("\n")],{type:"text/csv"});
-  const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="performance_vas.csv";a.click();URL.revokeObjectURL(url);
+  const daily=await loadDaily(); const sessions=await loadSessions();
+  const sessDates=new Set(sessions.map(s=>s.date));
+  const dailyOnly=Object.keys(daily).filter(d=>!sessDates.has(d));
+  if(!sessions.length && !Object.keys(daily).length){setStatus("Nothing to export yet.","err");return;}
+  const scols=SESSION_SCALES.map(s=>s.key), dcols=DAILY_SCALES.map(s=>s.key);
+  const head=["date","activity",...scols,...dcols,"note"];
+  const rows=[];
+  // one row per session, with that day's daily values attached
+  sessions.forEach(s=>{
+    const dv=(daily[s.date]&&daily[s.date].values)||{};
+    rows.push([s.date,csvCell(s.activity||""),...scols.map(c=>s.values[c]!=null?s.values[c]:""),...dcols.map(c=>dv[c]!=null?dv[c]:""),csvCell(s.note||"")]);
+  });
+  // days with daily data but no session
+  dailyOnly.forEach(d=>{const dv=daily[d].values||{};rows.push([d,"",...scols.map(_=>""),...dcols.map(c=>dv[c]!=null?dv[c]:""),csvCell(daily[d].note||"")]);});
+  rows.sort((a,b)=>String(a[0]).localeCompare(String(b[0])));
+  const csv=head.join(",")+"\n"+rows.map(r=>r.join(",")).join("\n");
+  const blob=new Blob([csv],{type:"text/csv"});const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");a.href=url;a.download="performance_vas.csv";a.click();URL.revokeObjectURL(url);
   setStatus("CSV exported (includes today — opening it reveals today's numbers).","ok");
 });
 function csvCell(s){s=String(s).replace(/"/g,'""');return /[",\n]/.test(s)?`"${s}"`:s;}
-document.getElementById("clear").addEventListener("click",async()=>{if(!confirm("Delete all saved entries on this device? Export CSV first if you want a copy."))return;await saveEntries([]);renderLog();setStatus("Log cleared.");});
+document.getElementById("clear").addEventListener("click",async()=>{
+  if(!confirm("Delete all saved entries on this device? Export CSV first if you want a copy."))return;
+  await saveDaily({});await saveSessions([]);await idbSet(OLD_KEY,"");
+  editingDaily=false; await updateDailyVisibility(); await updateSessionHeader(); renderLog(); setStatus("Log cleared.");
+});
 
-renderLog();
+(async()=>{ await migrateOld(); await updateDailyVisibility(); await updateSessionHeader(); renderLog(); })();
 </script>
 </body>
 </html>
